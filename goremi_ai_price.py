@@ -2,7 +2,7 @@ import streamlit as st
 import openai
 
 # GPT API 키 설정
-openai.api_key = "ff"  # 실제 키로 바꾸세요
+openai.api_key = "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"  # 실제 키로 바꾸세요
 
 # 상품 분석 함수
 def get_price_recommendation(product_name):
