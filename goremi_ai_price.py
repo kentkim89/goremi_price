@@ -1,14 +1,15 @@
+# Streamlit Cloud용 - 안정형 리팩터링 버전 (네이버 중심, 쿠팡 보조)
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 
+# 네이버 쇼핑 크롤러 (최신 구조 대응)
 def crawl_naver(query, max_items=10):
     headers = {"User-Agent": "Mozilla/5.0"}
     url = f"https://search.shopping.naver.com/search/all?query={query}"
-    res = requests.get(url, headers=headers)
+    res = requests.get(url, headers=headers, timeout=5)
     soup = BeautifulSoup(res.text, "html.parser")
     items = soup.select("li.basicList_item__0T9JD")
-
     results = []
     for item in items[:max_items]:
         name_tag = item.select_one("a.basicList_link__1MaTN")
@@ -19,22 +20,25 @@ def crawl_naver(query, max_items=10):
             results.append((name, price))
     return results
 
+# 쿠팡 크롤러 (예외 처리 포함)
 def crawl_coupang(query, max_items=10):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    url = f"https://www.coupang.com/np/search?component=&q={query}"
-    res = requests.get(url, headers=headers)
-    soup = BeautifulSoup(res.text, "html.parser")
-    items = soup.select("li.search-product")
-
-    results = []
-    for item in items[:max_items]:
-        name_tag = item.select_one("div.name")
-        price_tag = item.select_one("strong.price-value")
-        if name_tag and price_tag:
-            name = name_tag.get_text(strip=True)
-            price = int(price_tag.get_text(strip=True).replace(",", ""))
-            results.append((name, price))
-    return results
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        url = f"https://www.coupang.com/np/search?component=&q={query}"
+        res = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(res.text, "html.parser")
+        items = soup.select("li.search-product")
+        results = []
+        for item in items[:max_items]:
+            name_tag = item.select_one("div.name")
+            price_tag = item.select_one("strong.price-value")
+            if name_tag and price_tag:
+                name = name_tag.get_text(strip=True)
+                price = int(price_tag.get_text(strip=True).replace(",", ""))
+                results.append((name, price))
+        return results
+    except:
+        return []  # 실패 시 빈 리스트 반환
 
 def classify_competition(product_count, brand_count):
     if product_count >= 20 and brand_count >= 5:
@@ -50,15 +54,23 @@ def average(prices):
 def extract_brands(names):
     return list(set([name.split()[0] for name in names]))
 
-st.title("🧠 실시간 제품 분석 & 마진율 제안기 (네이버+쿠팡)")
+# --- Streamlit App ---
+st.title("🧠 실시간 제품 분석 & 마진율 제안기")
 
 query = st.text_input("제품명을 입력하세요", value="타코와사비")
 
 if query:
-    with st.spinner("🔍 데이터 수집 중..."):
-        naver_results = crawl_naver(query)
+    with st.spinner("🔍 네이버에서 검색 중..."):
+        try:
+            naver_results = crawl_naver(query)
+        except Exception as e:
+            st.error(f"네이버 크롤링 실패: {e}")
+            naver_results = []
+
+    with st.spinner("🔍 쿠팡에서 검색 중..."):
         coupang_results = crawl_coupang(query)
-        combined = naver_results + coupang_results
+
+    combined = naver_results + coupang_results
 
     if combined:
         names, prices = zip(*combined)
@@ -85,4 +97,4 @@ if query:
             st.metric("도매가", f"{wholesale:,.0f} ₩")
             st.metric("소비자가", f"{retail:,.0f} ₩")
     else:
-        st.warning("❗ 상품 정보를 찾을 수 없습니다.")
+        st.warning("❗ 상품 정보를 찾을 수 없습니다. 검색어를 바꿔보세요.")
