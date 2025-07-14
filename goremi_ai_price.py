@@ -1,27 +1,29 @@
 import streamlit as st
-from playwright.sync_api import sync_playwright
+import requests
+from bs4 import BeautifulSoup
 
-def crawl_naver_shopping(query, max_items=15):
+def crawl_naver_shopping_bs(query, max_items=15):
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    url = f"https://search.shopping.naver.com/search/all?query={query}"
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    items = soup.select("div.product_info_area")
     results = []
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(f"https://search.shopping.naver.com/search/all?query={query}")
-        page.wait_for_timeout(3000)
 
-        items = page.query_selector_all("div.product_info_area")[:max_items]
-        for item in items:
-            name_tag = item.query_selector("a.product_link")
-            price_tag = item.query_selector("span.price_num")
-            if name_tag and price_tag:
-                name = name_tag.inner_text()
-                price_text = price_tag.inner_text().replace(",", "").replace("원", "")
-                try:
-                    price = int(price_text)
-                    results.append((name, price))
-                except:
-                    continue
-        browser.close()
+    for item in items[:max_items]:
+        name_tag = item.select_one("a.product_link")
+        price_tag = item.select_one("span.price_num")
+        if name_tag and price_tag:
+            name = name_tag.get_text(strip=True)
+            price_text = price_tag.get_text(strip=True).replace(",", "").replace("원", "")
+            try:
+                price = int(price_text)
+                results.append((name, price))
+            except:
+                continue
     return results
 
 def classify_competition(product_count, brand_count):
@@ -38,17 +40,17 @@ def average(prices):
 def extract_brands(names):
     return list(set([name.split()[0] for name in names]))
 
-# Streamlit 앱 시작
-st.title("🧠 실시간 제품 분석 & 마진율 제안기")
+# Streamlit App
+st.title("🧠 실시간 제품 분석 & 마진율 제안기 (Cloud 버전)")
 
 query = st.text_input("제품명을 입력하세요", value="타코와사비")
 
 if query:
-    with st.spinner("📡 실시간 시장 분석 중..."):
+    with st.spinner("🔍 네이버에서 검색 중..."):
         try:
-            results = crawl_naver_shopping(query)
-        except:
-            st.error("❌ 크롤링 실패. 인터넷 연결 또는 구조 변경 확인 필요.")
+            results = crawl_naver_shopping_bs(query)
+        except Exception as e:
+            st.error(f"❌ 크롤링 실패: {e}")
             st.stop()
 
     if results:
@@ -70,6 +72,7 @@ if query:
 
         st.markdown("---")
         st.markdown("### 💰 가격 계산기 (부가세 별도 기준)")
+
         cogs = st.number_input("제조원가 (₩)", min_value=0.0, step=10.0)
 
         if cogs > 0:
@@ -80,4 +83,4 @@ if query:
             st.metric("도매가", f"{wholesale:,.0f} ₩")
             st.metric("소비자가", f"{retail:,.0f} ₩")
     else:
-        st.warning("검색 결과가 부족하거나 상품이 존재하지 않습니다.")
+        st.warning("🔍 검색 결과가 충분하지 않습니다. 다른 키워드를 시도해보세요.")
