@@ -1,13 +1,13 @@
 import streamlit as st
 from openai import OpenAI
 
-# 🔑 OpenAI API 키 입력 방식
+# 🔑 API 키 설정 (secrets.toml 또는 직접 입력)
 api_key = st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else st.text_input("🔐 OpenAI API Key", type="password")
 
-# OpenAI 클라이언트 초기화
+# OpenAI 클라이언트 생성
 client = OpenAI(api_key=api_key)
 
-# 가격 제안 생성 함수
+# GPT에게 가격 제안 요청
 def get_price_recommendation(product_name):
     prompt = f"""
     상품명: {product_name}
@@ -23,16 +23,16 @@ def get_price_recommendation(product_name):
     """
 
     completion = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",  # ✅ 여기 변경됨
         messages=[{"role": "user", "content": prompt}],
         temperature=0.5,
     )
-    
+
     return completion.choices[0].message.content
 
-# Streamlit UI
+# Streamlit UI 구성
 st.title("🧠 GPT 기반 가격 제안 시스템")
-st.write("상품명을 입력하면, 시장 경쟁도와 적정 가격을 GPT가 분석해 드립니다.")
+st.write("상품명을 입력하면 GPT가 시장 분석과 가격 전략을 제시합니다.")
 
 product = st.text_input("📦 상품명 입력", placeholder="예: 타코와사비, 가니미소, 주꾸미볶음 등")
 
