@@ -20,28 +20,34 @@ def get_naver_headers(client_id: str, client_secret: str) -> Dict[str, str]:
         "X-Naver-Client-Secret": client_secret
     }
 
-def analyze_product_competitiveness(product_name: str, client_id: str, client_secret: str, category_id: str = "50000008", fallback_mode: bool = False) -> Tuple[Dict[str, float], List[str]]:
+def analyze_product_competitiveness(product_name: str, client_id: str, client_secret: str, category_id: str = "50000008", fallback_mode: bool = False) -> Tuple[Dict[str, float], Dict[str, List[str]]]:
     """
-    Analyze using Naver APIs including blog and cafe. Return scores and list of evidences (up to 30).
+    Analyze using Naver APIs including blog and cafe. Return scores and categorized evidences (up to 50 total).
     Demand uses 'ratio' from shopping insight (click share percentage).
     Default category_id set to 50000008 for food products.
     """
     scores = {"rarity": 0.5, "popularity": 0.5, "demand": 0.5, "competition": 0.5}
-    evidences = []  # List of evidence strings, max 30
+    evidences = {
+        "쇼핑 검색 결과": [],
+        "검색 트렌드": [],
+        "쇼핑 인사이트": [],
+        "블로그 포스트": [],
+        "카페 아티클": []
+    }  # Categorized evidences
 
     if fallback_mode:
         scores["rarity"] = 0.7
         scores["popularity"] = 0.4
         scores["demand"] = 0.6
         scores["competition"] = 0.5
-        evidences = [
-            "추정 모드: 신제품으로 가정하여 희소성 높음 (0.7)",
-            "추정 모드: 초기 인기 중간 수준 (0.4)",
-            "추정 모드: 시장 수요 성장 예상 (0.6)",
-            "추정 모드: 경쟁 중간 (0.5)"
+        evidences["추정 모드"] = [
+            "신제품으로 가정하여 희소성 높음 (0.7)",
+            "초기 인기 중간 수준 (0.4)",
+            "시장 수요 성장 예상 (0.6)",
+            "경쟁 중간 (0.5)"
         ]
         st.warning("데이터 부족으로 추정 모드 사용. 실제 데이터 입력 추천.")
-        return scores, evidences[:30]
+        return scores, evidences
 
     headers = get_naver_headers(client_id, client_secret)
     end_date = datetime.now().strftime("%Y-%m-%d")
@@ -57,11 +63,11 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             total_results = data.get("total", 0)
             scores["competition"] = min(total_results / 10000, 1.0)
             scores["rarity"] = 1 - scores["competition"]
-            # Evidences: top 10 shop items, labeled as our brand or competitor
-            items = data.get("items", [])[:10]
+            # Evidences: top 15 shop items
+            items = data.get("items", [])[:15]
             for item in items:
                 label = "자사 제품" if any(brand in item['title'] for brand in OUR_BRANDS) else "경쟁 제품"
-                evidences.append(f"{label}: {item['title']} (링크: {item['link']})")
+                evidences["쇼핑 검색 결과"].append(f"{label}: {item['title']} (링크: {item['link']})")
             # Fallback for demand if insight fails
             if total_results > 0:
                 scores["demand"] = min(total_results / 5000, 1.0)  # Proxy: high search results imply demand
@@ -82,9 +88,9 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             if results:
                 avg_ratio = sum(item["ratio"] for item in results) / len(results)
                 scores["popularity"] = min(avg_ratio / 100, 1.0)
-                # Evidences: top 5 monthly ratios (search volume)
-                for item in results[:5]:
-                    evidences.append(f"검색 트렌드: {item['period']} - 검색 비율 {item['ratio']}")
+                # Evidences: all monthly ratios (up to 12 for 1 year)
+                for item in results:
+                    evidences["검색 트렌드"].append(f"{item['period']} - 검색 비율 {item['ratio']}")
         else:
             api_success = False
 
@@ -105,9 +111,9 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             if results:
                 avg_ratio = sum(item.get("ratio", 0) for item in results) / len(results)
                 scores["demand"] = min(avg_ratio / 100, 1.0)  # ratio is click share percentage
-                # Evidences: top 5 click shares
-                for item in results[:5]:
-                    evidences.append(f"쇼핑 인사이트: {item['period']} - 클릭 비율 {item.get('ratio', 'N/A')}")
+                # Evidences: all click shares (up to 12)
+                for item in results:
+                    evidences["쇼핑 인사이트"].append(f"{item['period']} - 클릭 비율 {item.get('ratio', 'N/A')}")
         else:
             api_success = False
             # Fallback already set from shop total
@@ -120,10 +126,10 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             blog_total = data.get("total", 0)
             # Adjust popularity with blog mentions (proxy for buzz/reviews)
             scores["popularity"] = (scores["popularity"] + min(blog_total / 10000, 1.0)) / 2
-            # Evidences: top 5 blog posts
-            items = data.get("items", [])[:5]
+            # Evidences: top 10 blog posts
+            items = data.get("items", [])[:10]
             for item in items:
-                evidences.append(f"블로그 포스트: {item['title']} (링크: {item['link']})")
+                evidences["블로그 포스트"].append(f"{item['title']} (링크: {item['link']})")
         else:
             api_success = False
 
@@ -135,10 +141,10 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             cafe_total = data.get("total", 0)
             # Adjust demand with cafe mentions (proxy for interest/purchases)
             scores["demand"] = (scores["demand"] + min(cafe_total / 10000, 1.0)) / 2
-            # Evidences: top 5 cafe articles
-            items = data.get("items", [])[:5]
+            # Evidences: top 10 cafe articles
+            items = data.get("items", [])[:10]
             for item in items:
-                evidences.append(f"카페 아티클: {item['title']} (링크: {item['link']})")
+                evidences["카페 아티클"].append(f"{item['title']} (링크: {item['link']})")
         else:
             api_success = False
 
@@ -149,12 +155,52 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
     if not api_success:
         return analyze_product_competitiveness(product_name, client_id, client_secret, category_id, fallback_mode=True)
 
-    return scores, evidences[:30]
+    # Limit total evidences to 50 by trimming each category if needed
+    total_evidences = sum(len(lst) for lst in evidences.values())
+    if total_evidences > 50:
+        for key in evidences:
+            evidences[key] = evidences[key][:max(1, len(evidences[key]) * 50 // total_evidences)]
+
+    return scores, evidences
 
 def suggest_margin(analysis: Dict[str, float]) -> float:
     avg_score = (analysis["rarity"] + analysis["popularity"] + analysis["demand"] - analysis["competition"]) / 4
     margin = avg_score * 50
     return max(10, min(40, margin))
+
+def generate_summary(analysis: Dict[str, float], margin: float) -> str:
+    """
+    Generate a summary for the recommended margin.
+    """
+    rarity = analysis["rarity"]
+    popularity = analysis["popularity"]
+    demand = analysis["demand"]
+    competition = analysis["competition"]
+    
+    reasons = []
+    if rarity > 0.7:
+        reasons.append("높은 희소성으로 인해 프리미엄 가격 전략이 가능합니다.")
+    elif rarity < 0.3:
+        reasons.append("희소성이 낮아 마진을 보수적으로 설정하였습니다.")
+    
+    if popularity > 0.7:
+        reasons.append("높은 인기로 인해 수요가 안정적입니다.")
+    elif popularity < 0.3:
+        reasons.append("인기가 낮아 마케팅 강화가 필요합니다.")
+    
+    if demand > 0.7:
+        reasons.append("강한 수요로 인해 높은 마진을 적용할 수 있습니다.")
+    elif demand < 0.3:
+        reasons.append("수요가 약해 마진을 조정하였습니다.")
+    
+    if competition > 0.7:
+        reasons.append("치열한 경쟁으로 인해 마진을 낮춰 경쟁력을 확보합니다.")
+    elif competition < 0.3:
+        reasons.append("낮은 경쟁으로 인해 여유로운 마진 설정이 가능합니다.")
+    
+    summary = f"추천 마진율 {margin:.1f}%는 제품의 희소성({rarity:.2f}), 인기({popularity:.2f}), 수요({demand:.2f}), 경쟁({competition:.2f})을 종합적으로 평가하여 산출되었습니다. "
+    summary += " ".join(reasons) + " 이 마진은 시장 경쟁력과 수익성을 균형 있게 고려한 결과입니다."
+    return summary
 
 def calculate_prices(cost_price: float, margin: float) -> Dict[str, float]:
     """
@@ -209,10 +255,10 @@ st.title("🐋 고래미 AI 신제품 마진 제안 시스템")
 st.write("""
 고래미, 씨포스트, 설래담 브랜드의 신제품을 위한 AI 분석 시스템입니다.  
 타 브랜드는 경쟁사로 간주하여 분석합니다. 제품 이름을 입력하세요. 예: 타코와사비
-네이버 블로그/카페 검색 추가, 수요 계산 개선 (쇼핑 인사이트 'ratio' 사용으로 클릭 비율 집계), 근거 30개.
+네이버 블로그/카페 검색 추가, 수요 계산 개선 (쇼핑 인사이트 'ratio' 사용으로 클릭 비율 집계), 근거 최대 50개 (카테고리별 그룹화).
 원가 입력 시 마진을 더한 도매단가, 사업자회원가, 일반소비자가 계산 (부가세 별도).
 모든 상품이 식품이므로 쇼핑 카테고리 ID를 50000008 (식품)로 기본 설정. 필요 시 사이드바에서 변경.
-가격은 정수로 반올림.
+가격은 정수로 반올림. 최종 추천 마진에 대한 요약 총평 추가.
 """)
 
 # Session state for API keys persistence
@@ -271,12 +317,16 @@ if st.button("분석 시작 🚀"):
                     "가격 (원)": list(prices.values())
                 })
         
-        with st.expander("근거 자료 (최대 30개)"):
-            if evidences:
-                for ev in evidences:
-                    st.write(f"- {ev}")
-            else:
-                st.write("근거 자료 없음.")
+        with st.expander("근거 자료 (최대 50개, 카테고리별 그룹화)"):
+            for category, items in evidences.items():
+                if items:
+                    st.subheader(category)
+                    for item in items:
+                        st.write(f"- {item}")
+        
+        st.subheader("최종 추천 마진 총평")
+        summary = generate_summary(analysis, margin)
+        st.info(summary)
 
 st.markdown("---")
-st.write("고래미 내부용 시스템. 브랜드: 고래미, 씨포스트, 설래담. 버전: 8.0")
+st.write("고래미 내부용 시스템. 브랜드: 고래미, 씨포스트, 설래담. 버전: 9.0")
