@@ -3,8 +3,9 @@ import requests
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
-import matplotlib.pyplot as plt
-import numpy as np
+
+# Company brands
+OUR_BRANDS = ["고래미", "씨포스트", "설래담"]
 
 # Naver API endpoints
 SEARCH_API_URL = "https://openapi.naver.com/v1/search/shop.json"
@@ -53,10 +54,11 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             total_results = data.get("total", 0)
             scores["competition"] = min(total_results / 10000, 1.0)
             scores["rarity"] = 1 - scores["competition"]
-            # Evidences: top 5 shop titles/links
+            # Evidences: top 5 shop titles/links, labeled as our brand or competitor
             items = data.get("items", [])[:5]
             for item in items:
-                evidences.append(f"경쟁 제품: {item['title']} (링크: {item['link']})")
+                label = "자사 제품" if any(brand in item['title'] for brand in OUR_BRANDS) else "경쟁 제품"
+                evidences.append(f"{label}: {item['title']} (링크: {item['link']})")
         else:
             api_success = False
 
@@ -121,21 +123,6 @@ def suggest_margin(analysis: Dict[str, float]) -> float:
     margin = avg_score * 50
     return max(10, min(40, margin))
 
-def plot_radar_chart(scores: Dict[str, float]):
-    labels = list(scores.keys())
-    values = list(scores.values())
-    values += values[:1]  # Close the polygon
-    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
-    angles += angles[:1]
-
-    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
-    ax.fill(angles, values, color='blue', alpha=0.25)
-    ax.plot(angles, values, color='blue', linewidth=2)
-    ax.set_yticklabels([])
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels)
-    return fig
-
 # Streamlit App
 st.set_page_config(page_title="고래미 AI 시스템", page_icon="🐋", layout="wide")
 
@@ -196,8 +183,11 @@ if st.button("분석 시작 🚀"):
         
         with col1:
             st.subheader("분석 결과 그래프")
-            fig = plot_radar_chart(analysis)
-            st.pyplot(fig)
+            chart_data = {
+                "metric": list(analysis.keys()),
+                "score": list(analysis.values())
+            }
+            st.bar_chart(chart_data, x="metric", y="score")
         
         with col2:
             st.subheader("상세 스코어")
@@ -216,4 +206,4 @@ if st.button("분석 시작 🚀"):
                 st.write("근거 자료 없음.")
 
 st.markdown("---")
-st.write("고래미 내부용 시스템. 브랜드: 고래미, 씨포스트, 설래담. 버전: 4.0")
+st.write("고래미 내부용 시스템. 브랜드: 고래미, 씨포스트, 설래담. 버전: 4.1")
