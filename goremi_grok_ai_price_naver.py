@@ -20,10 +20,11 @@ def get_naver_headers(client_id: str, client_secret: str) -> Dict[str, str]:
         "X-Naver-Client-Secret": client_secret
     }
 
-def analyze_product_competitiveness(product_name: str, client_id: str, client_secret: str, category_id: str = "50000000", fallback_mode: bool = False) -> Tuple[Dict[str, float], List[str]]:
+def analyze_product_competitiveness(product_name: str, client_id: str, client_secret: str, category_id: str = "50000008", fallback_mode: bool = False) -> Tuple[Dict[str, float], List[str]]:
     """
     Analyze using Naver APIs including blog and cafe. Return scores and list of evidences (up to 30).
-    Demand improved by using shopping search total or trend as fallback if insight fails.
+    Demand uses 'ratio' from shopping insight (click share percentage).
+    Default category_id set to 50000008 for food products.
     """
     scores = {"rarity": 0.5, "popularity": 0.5, "demand": 0.5, "competition": 0.5}
     evidences = []  # List of evidence strings, max 30
@@ -61,7 +62,6 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             for item in items:
                 label = "자사 제품" if any(brand in item['title'] for brand in OUR_BRANDS) else "경쟁 제품"
                 evidences.append(f"{label}: {item['title']} (링크: {item['link']})")
-            # Note: Review count, wish, purchase not directly available in API. Use as proxy: if total high, demand high.
             # Fallback for demand if insight fails
             if total_results > 0:
                 scores["demand"] = min(total_results / 5000, 1.0)  # Proxy: high search results imply demand
@@ -88,7 +88,7 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
         else:
             api_success = False
 
-        # 3. Datalab Shopping Insight for demand (improved: use provided category_id)
+        # 3. Datalab Shopping Insight for demand (use 'ratio' for click share)
         insight_body = {
             "startDate": start_date,
             "endDate": end_date,
@@ -103,11 +103,11 @@ def analyze_product_competitiveness(product_name: str, client_id: str, client_se
             data = response.json()
             results = data.get("results", [{}])[0].get("data", [])
             if results:
-                avg_click = sum(item.get("clickCount", 0) for item in results) / len(results)
-                scores["demand"] = min(avg_click / 100000, 1.0)
-                # Evidences: top 5 click counts
+                avg_ratio = sum(item.get("ratio", 0) for item in results) / len(results)
+                scores["demand"] = min(avg_ratio / 100, 1.0)  # ratio is click share percentage
+                # Evidences: top 5 click shares
                 for item in results[:5]:
-                    evidences.append(f"쇼핑 인사이트: {item['period']} - 클릭 수 {item.get('clickCount', 'N/A')}")
+                    evidences.append(f"쇼핑 인사이트: {item['period']} - 클릭 비율 {item.get('ratio', 'N/A')}")
         else:
             api_success = False
             # Fallback already set from shop total
@@ -159,24 +159,23 @@ def suggest_margin(analysis: Dict[str, float]) -> float:
 def calculate_prices(cost_price: float, margin: float) -> Dict[str, float]:
     """
     Calculate prices based on cost and margin (VAT excluded).
-    - Wholesale price: cost / (1 - (margin/2)/100)  # Lower margin for wholesale
-    - Business member price: cost / (1 - (margin*0.75)/100)
-    - Retail price: cost / (1 - margin/100)
+    Apply suggested margin to wholesale price.
+    - Wholesale price: cost / (1 - margin/100)
+    - Business member price: wholesale * 1.2 (example multiplier; customize)
+    - Retail price: wholesale * 1.5 (example multiplier; customize)
+    Prices rounded to nearest integer (no decimals).
     """
     if cost_price <= 0:
         return {}
     
-    wholesale_margin = margin / 2
-    business_margin = margin * 0.75
-    
-    wholesale_price = cost_price / (1 - wholesale_margin / 100)
-    business_price = cost_price / (1 - business_margin / 100)
-    retail_price = cost_price / (1 - margin / 100)
+    wholesale_price = cost_price / (1 - margin / 100)
+    business_price = wholesale_price * 1.2  # Example: 20% markup from wholesale
+    retail_price = wholesale_price * 1.5    # Example: 50% markup from wholesale
     
     return {
-        "도매단가": round(wholesale_price, 2),
-        "사업자회원가": round(business_price, 2),
-        "일반소비자가": round(retail_price, 2)
+        "도매단가": round(wholesale_price),
+        "사업자회원가": round(business_price),
+        "일반소비자가": round(retail_price)
     }
 
 # Streamlit App
@@ -210,8 +209,10 @@ st.title("🐋 고래미 AI 신제품 마진 제안 시스템")
 st.write("""
 고래미, 씨포스트, 설래담 브랜드의 신제품을 위한 AI 분석 시스템입니다.  
 타 브랜드는 경쟁사로 간주하여 분석합니다. 제품 이름을 입력하세요. 예: 타코와사비
-네이버 블로그/카페 검색 추가, 수요 계산 개선 (검색량/클릭/멘션 결합), 근거 30개.
+네이버 블로그/카페 검색 추가, 수요 계산 개선 (쇼핑 인사이트 'ratio' 사용으로 클릭 비율 집계), 근거 30개.
 원가 입력 시 마진을 더한 도매단가, 사업자회원가, 일반소비자가 계산 (부가세 별도).
+모든 상품이 식품이므로 쇼핑 카테고리 ID를 50000008 (식품)로 기본 설정. 필요 시 사이드바에서 변경.
+가격은 정수로 반올림.
 """)
 
 # Session state for API keys persistence
@@ -223,9 +224,9 @@ if 'client_secret' not in st.session_state:
 # Sidebar for API credentials and category ID
 with st.sidebar:
     st.header("Naver API 설정")
-    st.session_state['client_id'] = st.text_input("클라이언트 ID", value=st.session_state['client_id'], type="password")
-    st.session_state['client_secret'] = st.text_input("클라이언트 시크릿", value=st.session_state['client_secret'], type="password")
-    category_id = st.text_input("쇼핑 카테고리 ID (기본: 50000000, 제품에 맞게 입력)", value="50000000")
+    st.session_state['client_id'] = st.text_input("클라이언트 ID", value=st.session_state['client_id'])
+    st.session_state['client_secret'] = st.text_input("클라이언트 시크릿", value=st.session_state['client_secret'])
+    category_id = st.text_input("쇼핑 카테고리 ID (기본: 50000008 - 식품)", value="50000008")
     fallback_mode = st.checkbox("추정 모드 강제 사용")
 
 product_name = st.text_input("제품 이름 입력:", key="product_input")
@@ -278,4 +279,4 @@ if st.button("분석 시작 🚀"):
                 st.write("근거 자료 없음.")
 
 st.markdown("---")
-st.write("고래미 내부용 시스템. 브랜드: 고래미, 씨포스트, 설래담. 버전: 6.0")
+st.write("고래미 내부용 시스템. 브랜드: 고래미, 씨포스트, 설래담. 버전: 8.0")
